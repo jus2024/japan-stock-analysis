@@ -1,0 +1,38 @@
+name: CI - Agents
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "agents/**"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "agents/**"
+
+jobs:
+  smoke-check:
+    name: Agent Smoke Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agents
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 依存関係のインストール
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: インポート確認
+        run: |
+          python -c "from common.config import get_model_id; print('config OK')"
+          python -c "from common.logging import setup_logger; print('logging OK')"
+          python -c "from sample_agent.tools import current_time; print('tools OK')"
+          python -c "from sample_agent.app import app; print('app OK')"
