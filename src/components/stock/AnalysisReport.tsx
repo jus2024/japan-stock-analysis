@@ -1,6 +1,7 @@
 "use client";
 
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface AnalysisReportProps {
   content: string;
@@ -32,7 +33,9 @@ export default function AnalysisReport({
         className="analysis-markdown"
       >
         {content ? (
-          <ReactMarkdown>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {content}
+          </ReactMarkdown>
         ) : (
           !isStreaming && (
             <p style={{ color: "var(--color-text-secondary, #888)" }}>

@@ -66,6 +66,7 @@ export function useStockAnalysis(
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
+  const stockDataRef = useRef<StockDataPayload | null>(null);
 
   // コンポーネントアンマウント時に進行中リクエストをキャンセル
   useEffect(() => {
@@ -85,6 +86,7 @@ export function useStockAnalysis(
       setError(null);
       setAnalysisText("");
       setStockData(null);
+      stockDataRef.current = null;
       setIsAnalyzing(true);
 
       // JWT トークン取得
@@ -127,14 +129,38 @@ export function useStockAnalysis(
           setAnalysisText(displayText);
           if (parsed) {
             setStockData(parsed);
+            stockDataRef.current = parsed;
+            console.log("[useStockAnalysis] Stock data parsed successfully");
           }
         },
         onError: (errorMsg: string) => {
+          // デバッグ: エラー時にバッファの末尾を出力
+          console.log(
+            "[useStockAnalysis] Error. Buffer tail:",
+            rawBuffer.slice(-200),
+          );
           setError(errorMsg);
           setIsAnalyzing(false);
           abortControllerRef.current = null;
         },
         onComplete: () => {
+          // デバッグ: 完了時にマーカー検出状態を出力
+          const hasStart = rawBuffer.includes("<!--STOCK_DATA_JSON-->");
+          const hasEnd = rawBuffer.includes("<!--/STOCK_DATA_JSON-->");
+          console.log(
+            "[useStockAnalysis] Complete. Buffer length:",
+            rawBuffer.length,
+            "Has start marker:", hasStart,
+            "Has end marker:", hasEnd,
+          );
+          // 最終パース試行
+          if (!stockDataRef.current) {
+            const { stockData: finalParsed } = extractStockData(rawBuffer);
+            if (finalParsed) {
+              setStockData(finalParsed);
+              console.log("[useStockAnalysis] Final parse succeeded");
+            }
+          }
           setIsAnalyzing(false);
           abortControllerRef.current = null;
         },
