@@ -11,6 +11,7 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
 from common.logging import setup_logger
 from jp_stock_agent.agent import create_agent
+from jp_stock_agent.tools import get_stock_data_json
 
 logger = setup_logger("jp_stock_agent.app")
 
@@ -26,7 +27,7 @@ async def invoke(payload, context):
 
     callback_handler でテキストチャンクを asyncio.Queue に流し、
     async generator として逐次 yield する。
-    AgentCore Runtime が yield されたイベントを SSE 形式に変換する。
+    エージェント完了後、株価データ JSON をマーカー付きで追加送信する。
     """
     user_message = payload.get(
         "prompt",
@@ -48,6 +49,16 @@ async def invoke(payload, context):
         try:
             agent = create_agent()
             agent(user_message, callback_handler=streaming_callback)
+            # ツールが保存した株価データ JSON をマーカー付きで送信
+            stock_json = get_stock_data_json()
+            if stock_json:
+                marker = (
+                    "\n<!--STOCK_DATA_JSON-->"
+                    + stock_json
+                    + "<!--/STOCK_DATA_JSON-->\n"
+                )
+                loop.call_soon_threadsafe(queue.put_nowait, marker)
+                logger.info("株価データ JSON をストリームに送信しました")
             loop.call_soon_threadsafe(queue.put_nowait, _DONE)
         except Exception as e:
             loop.call_soon_threadsafe(queue.put_nowait, e)

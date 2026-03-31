@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import threading
 import urllib.parse
 import urllib.request
 
@@ -16,6 +17,14 @@ from strands import tool
 from common.logging import setup_logger
 
 logger = setup_logger("jp_stock_agent.tools")
+
+# スレッドローカルストレージ: 株価データ JSON をエージェント外に保持
+_thread_local = threading.local()
+
+
+def get_stock_data_json() -> str | None:
+    """直近の get_stock_prices 呼び出しで生成された JSON を取得する。"""
+    return getattr(_thread_local, "stock_data_json", None)
 
 
 @tool
@@ -175,13 +184,44 @@ def get_stock_prices(ticker_code: str) -> str:
             "prices": prices,
         }
 
-        result = json.dumps(payload, ensure_ascii=False)
+        full_json = json.dumps(payload, ensure_ascii=False)
+
+        # フル JSON はスレッドローカルに保存（app.py で SSE に流す）
+        _thread_local.stock_data_json = full_json
+
         logger.info(
             "銘柄 %s の株価データ JSON 生成完了（%d データポイント）",
             ticker_code,
             len(prices),
         )
-        return result
+
+        # エージェントにはテクニカル分析用の要約のみ返す
+        latest = prices[-1] if prices else {}
+        first = prices[0] if prices else {}
+        summary_lines = [
+            f"銘柄: {company_name}（{ticker_code}）",
+            f"データ期間: {start_date} 〜 {end_date}（{data_count}営業日）",
+            f"直近終値: {latest.get('close')}円",
+            f"期間始値: {first.get('close')}円",
+        ]
+        if latest.get("ma5") is not None:
+            summary_lines.append(f"5日MA: {latest['ma5']}円")
+        if latest.get("ma25") is not None:
+            summary_lines.append(f"25日MA: {latest['ma25']}円")
+        if latest.get("ma75") is not None:
+            summary_lines.append(f"75日MA: {latest['ma75']}円")
+        if latest.get("ma200") is not None:
+            summary_lines.append(f"200日MA: {latest['ma200']}円")
+
+        # 直近の騰落率
+        if first.get("close") and latest.get("close"):
+            chg = latest["close"] - first["close"]
+            pct = (chg / first["close"]) * 100
+            summary_lines.append(
+                f"期間騰落率: {chg:+.1f}円（{pct:+.1f}%）"
+            )
+
+        return "\n".join(summary_lines)
 
     except Exception as e:
         logger.error("銘柄コード %s の株価データ取得中にエラーが発生: %s", ticker_code, e)
@@ -208,7 +248,11 @@ def _safe_get(info: dict, key: str, multiplier: float = 1.0):
         fval = float(val)
         if math.isnan(fval) or math.isinf(fval):
             return None
-        return round(fval * multiplier, 2)
+        result = round(fval * multiplier, 2)
+        # yfinance の比率値が異常に大きい場合は multiplier 適用済みと判断
+        if multiplier > 1.0 and result > 100.0:
+            return round(fval, 2)
+        return result
     except (TypeError, ValueError):
         return None
 
