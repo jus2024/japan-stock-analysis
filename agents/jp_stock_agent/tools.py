@@ -198,28 +198,85 @@ def get_stock_prices(ticker_code: str) -> str:
         # エージェントにはテクニカル分析用の要約のみ返す
         latest = prices[-1] if prices else {}
         first = prices[0] if prices else {}
+        close = latest.get("close")
         summary_lines = [
             f"銘柄: {company_name}（{ticker_code}）",
             f"データ期間: {start_date} 〜 {end_date}（{data_count}営業日）",
-            f"直近終値: {latest.get('close')}円",
+            f"直近終値: {close}円",
             f"期間始値: {first.get('close')}円",
         ]
-        if latest.get("ma5") is not None:
-            summary_lines.append(f"5日MA: {latest['ma5']}円")
-        if latest.get("ma25") is not None:
-            summary_lines.append(f"25日MA: {latest['ma25']}円")
-        if latest.get("ma75") is not None:
-            summary_lines.append(f"75日MA: {latest['ma75']}円")
-        if latest.get("ma200") is not None:
-            summary_lines.append(f"200日MA: {latest['ma200']}円")
+
+        # 移動平均線
+        ma5 = latest.get("ma5")
+        ma25 = latest.get("ma25")
+        ma75 = latest.get("ma75")
+        ma200 = latest.get("ma200")
+        if ma5 is not None:
+            summary_lines.append(f"5日MA: {ma5}円")
+        if ma25 is not None:
+            summary_lines.append(f"25日MA: {ma25}円")
+        if ma75 is not None:
+            summary_lines.append(f"75日MA: {ma75}円")
+        if ma200 is not None:
+            summary_lines.append(f"200日MA: {ma200}円")
+
+        # トレンド判定
+        if close is not None:
+            positions = []
+            if ma25 is not None:
+                rel = "上" if close > ma25 else "下"
+                positions.append(f"25日MA{rel}")
+            if ma75 is not None:
+                rel = "上" if close > ma75 else "下"
+                positions.append(f"75日MA{rel}")
+            if ma200 is not None:
+                rel = "上" if close > ma200 else "下"
+                positions.append(f"200日MA{rel}")
+            if positions:
+                summary_lines.append(
+                    "終値の位置: " + "、".join(positions)
+                )
+
+        # ゴールデンクロス / デッドクロス判定
+        if len(prices) >= 2:
+            prev = prices[-2]
+            p_ma5 = prev.get("ma5")
+            p_ma25 = prev.get("ma25")
+            if (p_ma5 is not None and p_ma25 is not None
+                    and ma5 is not None and ma25 is not None):
+                if p_ma5 <= p_ma25 and ma5 > ma25:
+                    summary_lines.append(
+                        "シグナル: ゴールデンクロス発生（5日MAが25日MAを上抜け）"
+                    )
+                elif p_ma5 >= p_ma25 and ma5 < ma25:
+                    summary_lines.append(
+                        "シグナル: デッドクロス発生（5日MAが25日MAを下抜け）"
+                    )
 
         # 直近の騰落率
-        if first.get("close") and latest.get("close"):
-            chg = latest["close"] - first["close"]
+        if first.get("close") and close:
+            chg = close - first["close"]
             pct = (chg / first["close"]) * 100
             summary_lines.append(
                 f"期間騰落率: {chg:+.1f}円（{pct:+.1f}%）"
             )
+
+        # 直近20日の騰落率
+        if len(prices) >= 20:
+            p20 = prices[-20].get("close")
+            if p20 and close:
+                chg20 = close - p20
+                pct20 = (chg20 / p20) * 100
+                summary_lines.append(
+                    f"直近20日騰落率: {chg20:+.1f}円（{pct20:+.1f}%）"
+                )
+
+        # 期間高値・安値
+        highs = [p["high"] for p in prices if p.get("high")]
+        lows = [p["low"] for p in prices if p.get("low")]
+        if highs and lows:
+            summary_lines.append(f"期間高値: {max(highs)}円")
+            summary_lines.append(f"期間安値: {min(lows)}円")
 
         return "\n".join(summary_lines)
 

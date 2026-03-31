@@ -49,7 +49,7 @@ async def invoke(payload, context):
         try:
             agent = create_agent()
             agent(user_message, callback_handler=streaming_callback)
-            # ツールが保存した株価データ JSON をマーカー付きで送信
+            # ツールが保存した株価データ JSON を callback 経由で送信
             stock_json = get_stock_data_json()
             if stock_json:
                 marker = (
@@ -57,7 +57,8 @@ async def invoke(payload, context):
                     + stock_json
                     + "<!--/STOCK_DATA_JSON-->\n"
                 )
-                loop.call_soon_threadsafe(queue.put_nowait, marker)
+                # callback_handler と同じ経路で queue に送る
+                streaming_callback(data=marker)
                 logger.info("株価データ JSON をストリームに送信しました")
             loop.call_soon_threadsafe(queue.put_nowait, _DONE)
         except Exception as e:
