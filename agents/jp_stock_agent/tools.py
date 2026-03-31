@@ -7,7 +7,6 @@ import json
 import math
 import os
 import re
-import threading
 import urllib.parse
 import urllib.request
 
@@ -17,14 +16,6 @@ from strands import tool
 from common.logging import setup_logger
 
 logger = setup_logger("jp_stock_agent.tools")
-
-# スレッドローカルストレージ: 株価データ JSON をエージェント外に保持
-_thread_local = threading.local()
-
-
-def get_stock_data_json() -> str | None:
-    """直近の get_stock_prices 呼び出しで生成された JSON を取得する。"""
-    return getattr(_thread_local, "stock_data_json", None)
 
 
 @tool
@@ -113,179 +104,177 @@ def _search_by_name(name: str) -> str:
 
 @tool
 def get_stock_prices(ticker_code: str) -> str:
-    """過去1年分の日次株価データと移動平均線を取得し、JSON形式で返す。
+    """過去1年分の日次株価データと移動平均線を取得する。
+
+    テクニカル分析用の要約テキストと、フロントエンドのチャート描画用の
+    JSON データ（マーカー付き）を返す。
 
     Args:
         ticker_code: 4桁の銘柄コード（例: "7203"）
 
     Returns:
-        StockDataPayload 互換の JSON 文字列、またはエラーメッセージ
+        テクニカル要約 + マーカー付き株価 JSON 文字列
     """
     ticker_code = ticker_code.strip()
     if not ticker_code:
-        return "エラー: 銘柄コードが空です。4桁の銘柄コードを入力してください。"
+        return "エラー: 銘柄コードが空です。"
 
     ticker_symbol = f"{ticker_code}.T"
 
     try:
         ticker = yf.Ticker(ticker_symbol)
-
-        # 企業名を取得
         info = ticker.info
-        company_name = info.get("longName") or info.get("shortName") or ticker_code
+        company_name = (
+            info.get("longName") or info.get("shortName") or ticker_code
+        )
 
-        # 過去1年分の日次株価データを取得
         hist = ticker.history(period="1y")
-
         if hist.empty:
-            logger.warning("銘柄コード %s の株価データが取得できません", ticker_code)
+            logger.warning("銘柄 %s の株価データなし", ticker_code)
             return f"エラー: 銘柄コード「{ticker_code}」の株価データが取得できませんでした。"
 
-        # 日付昇順にソート（yfinance は通常昇順だが明示的に保証）
         hist = hist.sort_index()
 
-        # 移動平均線を算出
         sma_periods = [5, 25, 75, 200]
         for period in sma_periods:
-            hist[f"ma{period}"] = hist["Close"].rolling(window=period).mean()
+            col = f"ma{period}"
+            hist[col] = hist["Close"].rolling(window=period).mean()
 
-        # データ期間を記録
         start_date = hist.index[0].strftime("%Y-%m-%d")
         end_date = hist.index[-1].strftime("%Y-%m-%d")
         data_count = len(hist)
         logger.info(
-            "銘柄 %s の株価データ取得成功: %s 〜 %s（%d件）",
+            "銘柄 %s 株価取得: %s〜%s（%d件）",
             ticker_symbol, start_date, end_date, data_count,
         )
 
-        # StockDataPayload 互換の JSON 構造を構築
+        # 全データポイントを構築
         prices = []
-        for i, (idx, row) in enumerate(hist.iterrows()):
+        for idx, row in hist.iterrows():
             point = {
                 "date": idx.strftime("%Y-%m-%d"),
-                "open": round(row["Open"], 1) if not _is_nan(row["Open"]) else None,
-                "high": round(row["High"], 1) if not _is_nan(row["High"]) else None,
-                "low": round(row["Low"], 1) if not _is_nan(row["Low"]) else None,
-                "close": round(row["Close"], 1) if not _is_nan(row["Close"]) else None,
-                "volume": int(row["Volume"]) if not _is_nan(row["Volume"]) else 0,
+                "open": _round_or_none(row["Open"]),
+                "high": _round_or_none(row["High"]),
+                "low": _round_or_none(row["Low"]),
+                "close": _round_or_none(row["Close"]),
+                "volume": (
+                    int(row["Volume"])
+                    if not _is_nan(row["Volume"]) else 0
+                ),
             }
             for period in sma_periods:
-                ma_key = f"ma{period}"
-                val = row.get(ma_key)
-                if val is not None and not _is_nan(val):
-                    point[ma_key] = round(val, 1)
-                else:
-                    point[ma_key] = None
+                key = f"ma{period}"
+                point[key] = _round_or_none(row.get(key))
             prices.append(point)
 
-        payload = {
+        # --- チャート用 JSON（マーカー付き）---
+        # 日次データを週次に間引く（チャート描画用、約52ポイント）
+        # 毎週金曜日 or 最終営業日 + 直近5日は日次で保持
+        chart_prices = []
+        total = len(prices)
+        for i, p in enumerate(prices):
+            is_recent = i >= total - 5
+            is_weekly = i % 5 == 0
+            is_last = i == total - 1
+            if is_recent or is_weekly or is_last:
+                chart_prices.append(p)
+
+        chart_payload = json.dumps({
             "ticker_code": ticker_code,
             "company_name": company_name,
-            "prices": prices,
-        }
+            "prices": chart_prices,
+        }, ensure_ascii=False, separators=(",", ":"))
 
-        full_json = json.dumps(payload, ensure_ascii=False)
-
-        # フル JSON はスレッドローカルに保存（app.py で SSE に流す）
-        _thread_local.stock_data_json = full_json
-
-        logger.info(
-            "銘柄 %s の株価データ JSON 生成完了（%d データポイント）",
-            ticker_code,
-            len(prices),
+        marker_block = (
+            "\n<!--STOCK_DATA_JSON-->"
+            + chart_payload
+            + "<!--/STOCK_DATA_JSON-->\n"
         )
 
-        # エージェントにはテクニカル分析用の要約のみ返す
+        # --- テクニカル要約テキスト ---
         latest = prices[-1] if prices else {}
         first = prices[0] if prices else {}
         close = latest.get("close")
-        summary_lines = [
-            f"銘柄: {company_name}（{ticker_code}）",
-            f"データ期間: {start_date} 〜 {end_date}（{data_count}営業日）",
-            f"直近終値: {close}円",
-            f"期間始値: {first.get('close')}円",
-        ]
-
-        # 移動平均線
         ma5 = latest.get("ma5")
         ma25 = latest.get("ma25")
         ma75 = latest.get("ma75")
         ma200 = latest.get("ma200")
-        if ma5 is not None:
-            summary_lines.append(f"5日MA: {ma5}円")
-        if ma25 is not None:
-            summary_lines.append(f"25日MA: {ma25}円")
-        if ma75 is not None:
-            summary_lines.append(f"75日MA: {ma75}円")
-        if ma200 is not None:
-            summary_lines.append(f"200日MA: {ma200}円")
 
-        # トレンド判定
+        lines = [
+            f"銘柄: {company_name}（{ticker_code}）",
+            f"期間: {start_date} 〜 {end_date}（{data_count}日）",
+            f"直近終値: {close}円",
+            f"期間始値: {first.get('close')}円",
+        ]
+        for label, val in [
+            ("5日MA", ma5), ("25日MA", ma25),
+            ("75日MA", ma75), ("200日MA", ma200),
+        ]:
+            if val is not None:
+                lines.append(f"{label}: {val}円")
+
+        # トレンド
         if close is not None:
-            positions = []
+            pos = []
             if ma25 is not None:
-                rel = "上" if close > ma25 else "下"
-                positions.append(f"25日MA{rel}")
+                pos.append(f"25日MA{'上' if close > ma25 else '下'}")
             if ma75 is not None:
-                rel = "上" if close > ma75 else "下"
-                positions.append(f"75日MA{rel}")
+                pos.append(f"75日MA{'上' if close > ma75 else '下'}")
             if ma200 is not None:
-                rel = "上" if close > ma200 else "下"
-                positions.append(f"200日MA{rel}")
-            if positions:
-                summary_lines.append(
-                    "終値の位置: " + "、".join(positions)
-                )
+                pos.append(f"200日MA{'上' if close > ma200 else '下'}")
+            if pos:
+                lines.append("終値位置: " + "、".join(pos))
 
-        # ゴールデンクロス / デッドクロス判定
+        # GC/DC
         if len(prices) >= 2:
             prev = prices[-2]
-            p_ma5 = prev.get("ma5")
-            p_ma25 = prev.get("ma25")
-            if (p_ma5 is not None and p_ma25 is not None
-                    and ma5 is not None and ma25 is not None):
-                if p_ma5 <= p_ma25 and ma5 > ma25:
-                    summary_lines.append(
-                        "シグナル: ゴールデンクロス発生（5日MAが25日MAを上抜け）"
-                    )
-                elif p_ma5 >= p_ma25 and ma5 < ma25:
-                    summary_lines.append(
-                        "シグナル: デッドクロス発生（5日MAが25日MAを下抜け）"
-                    )
+            p5, p25 = prev.get("ma5"), prev.get("ma25")
+            if all(v is not None for v in [p5, p25, ma5, ma25]):
+                if p5 <= p25 and ma5 > ma25:
+                    lines.append("シグナル: ゴールデンクロス発生")
+                elif p5 >= p25 and ma5 < ma25:
+                    lines.append("シグナル: デッドクロス発生")
 
-        # 直近の騰落率
-        if first.get("close") and close:
-            chg = close - first["close"]
-            pct = (chg / first["close"]) * 100
-            summary_lines.append(
-                f"期間騰落率: {chg:+.1f}円（{pct:+.1f}%）"
-            )
+        # 騰落率
+        fc = first.get("close")
+        if fc and close:
+            chg = close - fc
+            pct = (chg / fc) * 100
+            lines.append(f"期間騰落率: {chg:+.1f}円（{pct:+.1f}%）")
 
-        # 直近20日の騰落率
         if len(prices) >= 20:
-            p20 = prices[-20].get("close")
-            if p20 and close:
-                chg20 = close - p20
-                pct20 = (chg20 / p20) * 100
-                summary_lines.append(
-                    f"直近20日騰落率: {chg20:+.1f}円（{pct20:+.1f}%）"
-                )
+            p20c = prices[-20].get("close")
+            if p20c and close:
+                c20 = close - p20c
+                r20 = (c20 / p20c) * 100
+                lines.append(f"直近20日: {c20:+.1f}円（{r20:+.1f}%）")
 
-        # 期間高値・安値
         highs = [p["high"] for p in prices if p.get("high")]
         lows = [p["low"] for p in prices if p.get("low")]
         if highs and lows:
-            summary_lines.append(f"期間高値: {max(highs)}円")
-            summary_lines.append(f"期間安値: {min(lows)}円")
+            lines.append(f"期間高値: {max(highs)}円 / 安値: {min(lows)}円")
 
-        return "\n".join(summary_lines)
+        summary = "\n".join(lines)
+
+        logger.info("銘柄 %s テクニカル要約生成完了", ticker_code)
+
+        # 要約テキスト + マーカー付き JSON を返す
+        # エージェントは要約を分析に使い、マーカー部分はそのまま出力する
+        return summary + marker_block
 
     except Exception as e:
-        logger.error("銘柄コード %s の株価データ取得中にエラーが発生: %s", ticker_code, e)
+        logger.error("銘柄 %s 株価取得エラー: %s", ticker_code, e)
         return (
             f"エラー: 銘柄コード「{ticker_code}」の株価データ取得中に"
             "エラーが発生しました。しばらく時間をおいて再度お試しください。"
         )
+
+
+def _round_or_none(value, digits: int = 1):
+    """数値を丸める。NaN/None は None を返す。"""
+    if value is None or _is_nan(value):
+        return None
+    return round(float(value), digits)
 
 
 def _is_nan(value) -> bool:
