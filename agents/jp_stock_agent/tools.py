@@ -50,14 +50,20 @@ def _search_by_code(code: str) -> str:
         company_name = info.get("longName") or info.get("shortName")
         if not company_name:
             logger.warning("銘柄コード %s に対応する企業が見つかりません", code)
-            return f"エラー: 銘柄コード「{code}」に一致する上場企業が見つかりませんでした。正しい4桁の銘柄コードを入力してください。"
+            return (
+                f"エラー: 銘柄コード「{code}」に一致する上場企業が"
+                "見つかりませんでした。正しい4桁の銘柄コードを入力してください。"
+            )
 
         logger.info("銘柄特定成功: %s (%s)", company_name, ticker_symbol)
         return f"企業名: {company_name}\n銘柄コード: {code}\nティッカー: {ticker_symbol}"
 
     except Exception as e:
         logger.error("銘柄コード %s の検索中にエラーが発生: %s", code, e)
-        return f"エラー: 銘柄コード「{code}」の検索中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
+        return (
+            f"エラー: 銘柄コード「{code}」の検索中にエラーが発生しました。"
+            "しばらく時間をおいて再度お試しください。"
+        )
 
 
 def _search_by_name(name: str) -> str:
@@ -71,8 +77,11 @@ def _search_by_name(name: str) -> str:
                 symbol = quote.get("symbol", "")
                 # 東証銘柄（.T サフィックス）を優先
                 if symbol.endswith(".T"):
-                    exchange_display = quote.get("exchDisp", "")
-                    quote_name = quote.get("longname") or quote.get("shortname") or ""
+                    quote_name = (
+                        quote.get("longname")
+                        or quote.get("shortname")
+                        or ""
+                    )
                     code = symbol.replace(".T", "")
 
                     if quote_name:
@@ -80,11 +89,17 @@ def _search_by_name(name: str) -> str:
                         return f"企業名: {quote_name}\n銘柄コード: {code}\nティッカー: {symbol}"
 
         logger.warning("銘柄名「%s」に一致する東証上場企業が見つかりません", name)
-        return f"エラー: 「{name}」に一致する日本の上場企業が見つかりませんでした。銘柄名または4桁の銘柄コードを確認して再入力してください。"
+        return (
+            f"エラー: 「{name}」に一致する日本の上場企業が見つかりませんでした。"
+            "銘柄名または4桁の銘柄コードを確認して再入力してください。"
+        )
 
     except Exception as e:
         logger.error("銘柄名「%s」の検索中にエラーが発生: %s", name, e)
-        return f"エラー: 「{name}」の検索中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
+        return (
+            f"エラー: 「{name}」の検索中にエラーが発生しました。"
+            "しばらく時間をおいて再度お試しください。"
+        )
 
 
 @tool
@@ -161,12 +176,19 @@ def get_stock_prices(ticker_code: str) -> str:
         }
 
         result = json.dumps(payload, ensure_ascii=False)
-        logger.info("銘柄 %s の株価データ JSON 生成完了（%d データポイント）", ticker_code, len(prices))
+        logger.info(
+            "銘柄 %s の株価データ JSON 生成完了（%d データポイント）",
+            ticker_code,
+            len(prices),
+        )
         return result
 
     except Exception as e:
         logger.error("銘柄コード %s の株価データ取得中にエラーが発生: %s", ticker_code, e)
-        return f"エラー: 銘柄コード「{ticker_code}」の株価データ取得中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
+        return (
+            f"エラー: 銘柄コード「{ticker_code}」の株価データ取得中に"
+            "エラーが発生しました。しばらく時間をおいて再度お試しください。"
+        )
 
 
 def _is_nan(value) -> bool:
@@ -343,7 +365,10 @@ def get_financial_metrics(ticker_code: str) -> str:
 
     except Exception as e:
         logger.error("銘柄コード %s の財務指標取得中にエラーが発生: %s", ticker_code, e)
-        return f"エラー: 銘柄コード「{ticker_code}」の財務指標取得中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
+        return (
+            f"エラー: 銘柄コード「{ticker_code}」の財務指標取得中に"
+            "エラーが発生しました。しばらく時間をおいて再度お試しください。"
+        )
 
 
 # --- ニュース影響度判定用キーワード ---
@@ -396,7 +421,10 @@ def _fetch_yfinance_news(ticker_code: str) -> list[dict]:
                 try:
                     from datetime import datetime, timezone
                     if isinstance(published, (int, float)):
-                        pub_str = datetime.fromtimestamp(published, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+                        dt = datetime.fromtimestamp(
+                            published, tz=timezone.utc,
+                        )
+                        pub_str = dt.strftime("%Y-%m-%d %H:%M")
                     else:
                         pub_str = str(published)
                 except Exception:
@@ -503,7 +531,10 @@ def search_news(company_name: str, ticker_code: str) -> str:
                 "ticker_code": ticker_code,
                 "company_name": company_name,
                 "news": [],
-                "summary": f"{company_name}（{ticker_code}）に関する直近のニュース・IR情報は取得できませんでした。",
+                "summary": (
+                    f"{company_name}（{ticker_code}）に関する"
+                    "直近のニュース・IR情報は取得できませんでした。"
+                ),
                 "tavily_enabled": bool(os.getenv("TAVILY_API_KEY")),
             }
             return json.dumps(payload, ensure_ascii=False)
@@ -537,8 +568,15 @@ def search_news(company_name: str, ticker_code: str) -> str:
         return result
 
     except Exception as e:
-        logger.error("銘柄 %s (%s) のニュース取得中にエラーが発生: %s", ticker_code, company_name, e)
-        return f"エラー: {company_name}（{ticker_code}）のニュース取得中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
+        logger.error(
+            "銘柄 %s (%s) のニュース取得中にエラーが発生: %s",
+            ticker_code, company_name, e,
+        )
+        return (
+            f"エラー: {company_name}（{ticker_code}）の"
+            "ニュース取得中にエラーが発生しました。"
+            "しばらく時間をおいて再度お試しください。"
+        )
 
 
 # --- 同業種比較用: 主要日本企業のセクター別マッピング ---
@@ -592,14 +630,20 @@ def get_sector_peers(ticker_code: str) -> str:
         peer_codes = _find_peer_codes(ticker_code, sector)
 
         if len(peer_codes) < 3:
-            logger.warning("銘柄 %s のセクター「%s」で十分な同業種企業が見つかりません", ticker_code, sector)
+            logger.warning(
+                "銘柄 %s のセクター「%s」で十分な同業種企業が見つかりません",
+                ticker_code, sector,
+            )
             return json.dumps({
                 "ticker_code": ticker_code,
                 "company_name": company_name,
                 "sector": sector,
                 "industry": industry,
                 "peers": [],
-                "evaluation": f"セクター「{sector}」の同業種企業データが不足しているため、比較分析を実行できませんでした。",
+                "evaluation": (
+                    f"セクター「{sector}」の同業種企業データが"
+                    "不足しているため、比較分析を実行できませんでした。"
+                ),
             }, ensure_ascii=False)
 
         # 対象銘柄の指標を取得
@@ -631,7 +675,10 @@ def get_sector_peers(ticker_code: str) -> str:
 
     except Exception as e:
         logger.error("銘柄 %s の同業種比較中にエラーが発生: %s", ticker_code, e)
-        return f"エラー: 銘柄コード「{ticker_code}」の同業種比較中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
+        return (
+            f"エラー: 銘柄コード「{ticker_code}」の同業種比較中に"
+            "エラーが発生しました。しばらく時間をおいて再度お試しください。"
+        )
 
 
 def _find_peer_codes(ticker_code: str, sector: str) -> list[str]:
