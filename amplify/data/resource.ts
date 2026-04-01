@@ -1,4 +1,5 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
+import { stockPriceFunction } from "../functions/stock-price/resource.js";
 
 /**
  * データモデル定義
@@ -14,6 +15,14 @@ const schema = a.schema({
       isDone: a.boolean().default(false),
     })
     .authorization((allow) => [allow.publicApiKey()]),
+
+  // 株価データ取得カスタムクエリ
+  getStockPrices: a
+    .query()
+    .arguments({ tickerCode: a.string().required() })
+    .returns(a.string())
+    .authorization((allow) => [allow.authenticated()])
+    .handler(a.handler.function(stockPriceFunction)),
 });
 
 export type Schema = ClientSchema<typeof schema>;

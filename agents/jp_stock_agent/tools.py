@@ -104,16 +104,13 @@ def _search_by_name(name: str) -> str:
 
 @tool
 def get_stock_prices(ticker_code: str) -> str:
-    """過去1年分の日次株価データと移動平均線を取得する。
-
-    テクニカル分析用の要約テキストと、フロントエンドのチャート描画用の
-    JSON データ（マーカー付き）を返す。
+    """過去1年分の日次株価データと移動平均線を取得し、テクニカル分析用テキスト要約を返す。
 
     Args:
         ticker_code: 4桁の銘柄コード（例: "7203"）
 
     Returns:
-        テクニカル要約 + マーカー付き株価 JSON 文字列
+        テクニカル分析用テキスト要約
     """
     ticker_code = ticker_code.strip()
     if not ticker_code:
@@ -166,30 +163,6 @@ def get_stock_prices(ticker_code: str) -> str:
                 key = f"ma{period}"
                 point[key] = _round_or_none(row.get(key))
             prices.append(point)
-
-        # --- チャート用 JSON（マーカー付き）---
-        # 日次データを週次に間引く（チャート描画用、約52ポイント）
-        # 毎週金曜日 or 最終営業日 + 直近5日は日次で保持
-        chart_prices = []
-        total = len(prices)
-        for i, p in enumerate(prices):
-            is_recent = i >= total - 5
-            is_weekly = i % 5 == 0
-            is_last = i == total - 1
-            if is_recent or is_weekly or is_last:
-                chart_prices.append(p)
-
-        chart_payload = json.dumps({
-            "ticker_code": ticker_code,
-            "company_name": company_name,
-            "prices": chart_prices,
-        }, ensure_ascii=False, separators=(",", ":"))
-
-        marker_block = (
-            "\n<!--STOCK_DATA_JSON-->"
-            + chart_payload
-            + "<!--/STOCK_DATA_JSON-->\n"
-        )
 
         # --- テクニカル要約テキスト ---
         latest = prices[-1] if prices else {}
@@ -258,9 +231,7 @@ def get_stock_prices(ticker_code: str) -> str:
 
         logger.info("銘柄 %s テクニカル要約生成完了", ticker_code)
 
-        # 要約テキスト + マーカー付き JSON を返す
-        # エージェントは要約を分析に使い、マーカー部分はそのまま出力する
-        return summary + marker_block
+        return summary
 
     except Exception as e:
         logger.error("銘柄 %s 株価取得エラー: %s", ticker_code, e)

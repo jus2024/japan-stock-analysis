@@ -1,10 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { fetchAuthSession } from "aws-amplify/auth";
+import { generateClient } from "aws-amplify/data";
+import type { Schema } from "@/amplify/data/resource";
 import { invokeRuntime } from "@/src/lib/agent/agentRuntime";
 import type { StockDataPayload } from "@/src/types/stock";
 
 const STOCK_DATA_START_MARKER = "<!--STOCK_DATA_JSON-->";
 const STOCK_DATA_END_MARKER = "<!--/STOCK_DATA_JSON-->";
+
+/** データソースの種別 */
+type StockDataSource = "graphql" | "sse" | null;
 
 export interface UseStockAnalysisReturn {
   analysisText: string;
@@ -13,6 +18,25 @@ export interface UseStockAnalysisReturn {
   isLoadingChart: boolean;
   error: string | null;
   analyze: (query: string) => Promise<void>;
+}
+
+/**
+ * GraphQL側とSSE側の両方から株価データが取得された場合のデータソース優先ロジック。
+ * GraphQL側のデータが存在する場合、GraphQL側を優先する。
+ *
+ * Property 2 のテスト用にエクスポートする。
+ */
+export function resolveStockDataSource(
+  graphqlData: StockDataPayload | null,
+  sseData: StockDataPayload | null,
+): { data: StockDataPayload | null; source: StockDataSource } {
+  if (graphqlData) {
+    return { data: graphqlData, source: "graphql" };
+  }
+  if (sseData) {
+    return { data: sseData, source: "sse" };
+  }
+  return { data: null, source: null };
 }
 
 /**
@@ -61,10 +85,20 @@ function extractStockData(buffer: string): {
 }
 
 /**
+ * クエリ文字列から銘柄コード（4桁数字）を抽出する。
+ * 銘柄コードが見つからない場合は null を返す。
+ */
+export function extractTickerCode(query: string): string | null {
+  const match = query.match(/\b(\d{4})\b/);
+  return match ? match[1] : null;
+}
+
+/**
  * 株式分析専用のカスタムフック。
  *
- * AgentCore Runtime と SSE 通信し、ストリーム内の JSON マーカーを検出して
- * テキスト（analysisText）と株価データ（stockData）を分離する。
+ * Amplify GraphQL API（getStockPrices）と AgentCore Runtime SSE 通信を
+ * 並行実行し、チャートデータを高速に取得する。
+ * GraphQL側が成功すれば即座にチャートを描画し、失敗時はSSEマーカーにフォールバックする。
  *
  * @param runtimeArn - AgentCore Runtime の ARN（未設定時は送信不可）
  */
@@ -79,6 +113,7 @@ export function useStockAnalysis(
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
   const stockDataRef = useRef<StockDataPayload | null>(null);
+  const stockDataSourceRef = useRef<StockDataSource>(null);
 
   // コンポーネントアンマウント時に進行中リクエストをキャンセル
   useEffect(() => {
@@ -99,8 +134,9 @@ export function useStockAnalysis(
       setAnalysisText("");
       setStockData(null);
       stockDataRef.current = null;
+      stockDataSourceRef.current = null;
       setIsAnalyzing(true);
-      setIsLoadingChart(false);
+      setIsLoadingChart(true); // Task 4.1: 分析開始時にisLoadingChart=true
 
       // JWT トークン取得
       let accessToken: string;
@@ -116,6 +152,7 @@ export function useStockAnalysis(
           "認証情報を取得できません。ログイン状態を確認してください。",
         );
         setIsAnalyzing(false);
+        setIsLoadingChart(false);
         return;
       }
 
@@ -126,10 +163,38 @@ export function useStockAnalysis(
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
+      // Task 3.1: GraphQL クエリの準備
+      const tickerCode = extractTickerCode(query);
+
+      // Task 3.2: GraphQL クエリと SSE 通信を並行実行
+      const graphqlPromise = (async () => {
+        if (!tickerCode) return; // 銘柄コードが抽出できない場合はスキップ
+        try {
+          const client = generateClient<Schema>();
+          const result = await client.queries.getStockPrices({ tickerCode });
+          if (result.data) {
+            const parsed = JSON.parse(result.data) as StockDataPayload & { error?: string };
+            if (!parsed.error) {
+              // Task 3.4: GraphQL側のデータが存在する場合、即座にセット
+              const resolved = resolveStockDataSource(parsed, stockDataRef.current);
+              if (resolved.source === "graphql") {
+                setStockData(parsed);
+                stockDataRef.current = parsed;
+                stockDataSourceRef.current = "graphql";
+                setIsLoadingChart(false); // Task 4.1: GraphQLデータ到着時にfalse
+              }
+            }
+          }
+        } catch {
+          // Task 3.3: GraphQL失敗時はSSEフォールバックに任せる
+          // isLoadingChart は true のまま継続（Task 4.1）
+        }
+      })();
+
       // チャンクを蓄積するバッファ
       let rawBuffer = "";
 
-      await invokeRuntime({
+      const ssePromise = invokeRuntime({
         runtimeArn,
         accessToken,
         sessionId: sessionIdRef.current,
@@ -140,32 +205,51 @@ export function useStockAnalysis(
           const { displayText, stockData: parsed, isLoadingChart: loading } =
             extractStockData(rawBuffer);
           setAnalysisText(displayText);
-          setIsLoadingChart(loading);
+
           if (parsed) {
-            setStockData(parsed);
-            stockDataRef.current = parsed;
-            setIsLoadingChart(false);
+            // Task 3.3 & 3.4: SSEマーカーからデータが取得された場合、
+            // GraphQL側のデータが既に存在するなら無視する
+            if (stockDataSourceRef.current !== "graphql") {
+              setStockData(parsed);
+              stockDataRef.current = parsed;
+              stockDataSourceRef.current = "sse";
+              setIsLoadingChart(false);
+            }
+          } else if (loading && stockDataSourceRef.current !== "graphql") {
+            // SSEマーカー途中でGraphQLデータがまだない場合のみローディング継続
+            setIsLoadingChart(true);
           }
         },
         onError: (errorMsg: string) => {
           setError(errorMsg);
           setIsAnalyzing(false);
-          setIsLoadingChart(false);
+          // Task 4.1: エラー時はローディング終了（GraphQLデータがあればそのまま）
+          if (stockDataSourceRef.current !== "graphql") {
+            setIsLoadingChart(false);
+          }
           abortControllerRef.current = null;
         },
         onComplete: () => {
-          // 最終パース試行
+          // 最終パース試行（SSEフォールバック）
           if (!stockDataRef.current) {
             const { stockData: finalParsed } = extractStockData(rawBuffer);
             if (finalParsed) {
               setStockData(finalParsed);
+              stockDataRef.current = finalParsed;
+              stockDataSourceRef.current = "sse";
             }
           }
           setIsAnalyzing(false);
-          setIsLoadingChart(false);
+          // Task 4.1: 全ソース失敗時にfalse（GraphQLデータがあれば既にfalse）
+          if (stockDataSourceRef.current !== "graphql") {
+            setIsLoadingChart(false);
+          }
           abortControllerRef.current = null;
         },
       });
+
+      // 両方の完了を待つ（GraphQLは先に完了する想定）
+      await Promise.allSettled([graphqlPromise, ssePromise]);
     },
     [runtimeArn],
   );

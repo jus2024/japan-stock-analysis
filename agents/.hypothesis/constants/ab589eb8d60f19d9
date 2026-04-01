@@ -1,0 +1,4 @@
+# file: /Users/okamasa/dev/kiro-web-app/japan-stock-analysis/agents/common/logging.py
+# hypothesis_version: 6.151.10
+
+['INFO', 'LOG_LEVEL']
