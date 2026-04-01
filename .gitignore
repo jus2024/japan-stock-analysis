@@ -47,3 +47,9 @@ agents/.env.runtime
 # AgentCore CLI
 agents/.bedrock_agentcore.yaml
 agents/.bedrock_agentcore/
+
+# Hypothesis テストキャッシュ
+agents/.hypothesis/
+
+# Kiro ローカル設定
+.kiro/settings/
