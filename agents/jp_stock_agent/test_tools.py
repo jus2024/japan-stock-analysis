@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from jp_stock_agent.tools import get_stock_prices
 
