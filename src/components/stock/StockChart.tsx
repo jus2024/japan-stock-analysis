@@ -83,7 +83,7 @@ export default function StockChart({ data }: StockChartProps) {
   if (!data.length) return null;
 
   return (
-    <section aria-label="株価チャート">
+    <section aria-label="株価チャート" style={{ backgroundColor: "#fff", borderRadius: 8, padding: "0.5rem" }}>
       <ResponsiveContainer width="100%" height={400}>
         <ComposedChart
           data={data}
@@ -121,8 +121,8 @@ export default function StockChart({ data }: StockChartProps) {
             yAxisId="volume"
             dataKey="volume"
             name="出来高"
-            fill="#90caf9"
-            opacity={0.35}
+            fill="#5c9bd6"
+            opacity={0.55}
             isAnimationActive={false}
           />
 
