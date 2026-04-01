@@ -499,33 +499,37 @@ def _fetch_yfinance_news(ticker_code: str) -> list[dict]:
         ticker = yf.Ticker(f"{ticker_code}.T")
         news_list = ticker.news or []
         for article in news_list[:10]:
-            title = article.get("title", "")
-            description = article.get("description", "") or article.get("summary", "")
-            source = article.get("publisher", "不明")
-            published = article.get("providerPublishTime")
-            link = article.get("link", "")
+            # yfinance v1.2+: ネスト構造 {"id": ..., "content": {...}}
+            content = article.get("content", article)
+            title = content.get("title", "")
+            summary = content.get("summary", "") or content.get(
+                "description", ""
+            )
+            provider = content.get("provider", {})
+            source = (
+                provider.get("displayName", "")
+                if isinstance(provider, dict)
+                else str(provider)
+            ) or "不明"
+            pub_date = content.get("pubDate", "") or content.get(
+                "displayTime", ""
+            )
+            canonical = content.get("canonicalUrl", {})
+            link = (
+                canonical.get("url", "")
+                if isinstance(canonical, dict)
+                else ""
+            )
 
-            # providerPublishTime は UNIX タイムスタンプの場合がある
-            pub_str = ""
-            if published:
-                try:
-                    from datetime import datetime, timezone
-                    if isinstance(published, (int, float)):
-                        dt = datetime.fromtimestamp(
-                            published, tz=timezone.utc,
-                        )
-                        pub_str = dt.strftime("%Y-%m-%d %H:%M")
-                    else:
-                        pub_str = str(published)
-                except Exception:
-                    pub_str = str(published)
+            if not title:
+                continue
 
-            impact = _assess_impact(title, description)
+            impact = _assess_impact(title, summary)
             items.append({
                 "title": title,
-                "description": description,
+                "description": summary[:300] if summary else "",
                 "source": source,
-                "published": pub_str,
+                "published": pub_date,
                 "link": link,
                 "impact": impact,
                 "origin": "yfinance",
@@ -634,23 +638,39 @@ def search_news(company_name: str, ticker_code: str) -> str:
         for item in all_news:
             impact_counts[item.get("impact", "ニュートラル")] += 1
 
-        summary_parts = [
-            f"{company_name}（{ticker_code}）に関する直近ニュースを{len(all_news)}件取得しました。",
-            f"影響度内訳: ポジティブ {impact_counts['ポジティブ']}件、"
-            f"ネガティブ {impact_counts['ネガティブ']}件、"
-            f"ニュートラル {impact_counts['ニュートラル']}件。",
+        # テキスト形式でニュース一覧を構築（エージェントが分析に使う）
+        lines = [
+            f"{company_name}（{ticker_code}）の直近ニュース "
+            f"{len(all_news)}件"
+            f"（yfinance: {len(yf_news)}件, Tavily: {len(tavily_news)}件）:",
+            "",
         ]
+        for i, item in enumerate(all_news[:10], 1):
+            title = item.get("title", "")
+            desc = item.get("description", "")
+            source = item.get("source", "")
+            impact = item.get("impact", "ニュートラル")
+            pub = item.get("published", "")
+            origin = item.get("origin", "")
+            origin_label = "[Tavily]" if origin == "tavily" else "[Yahoo]"
+            lines.append(f"[{i}] {origin_label} {title}")
+            if desc:
+                short_desc = desc[:200]
+                if len(desc) > 200:
+                    short_desc += "..."
+                lines.append(f"    {short_desc}")
+            lines.append(
+                f"    出典: {source} / {pub} / 影響度: {impact}"
+            )
+            lines.append("")
 
-        payload = {
-            "ticker_code": ticker_code,
-            "company_name": company_name,
-            "news": all_news,
-            "impact_summary": impact_counts,
-            "summary": "".join(summary_parts),
-            "tavily_enabled": bool(os.getenv("TAVILY_API_KEY")),
-        }
+        lines.append(
+            f"影響度集計: ポジティブ {impact_counts['ポジティブ']}件、"
+            f"ネガティブ {impact_counts['ネガティブ']}件、"
+            f"ニュートラル {impact_counts['ニュートラル']}件"
+        )
 
-        result = json.dumps(payload, ensure_ascii=False)
+        result = "\n".join(lines)
         logger.info(
             "銘柄 %s のニュース取得完了（yfinance: %d件, tavily: %d件）",
             ticker_code, len(yf_news), len(tavily_news),

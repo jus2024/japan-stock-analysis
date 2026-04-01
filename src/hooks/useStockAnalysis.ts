@@ -10,6 +10,7 @@ export interface UseStockAnalysisReturn {
   analysisText: string;
   stockData: StockDataPayload | null;
   isAnalyzing: boolean;
+  isLoadingChart: boolean;
   error: string | null;
   analyze: (query: string) => Promise<void>;
 }
@@ -17,18 +18,24 @@ export interface UseStockAnalysisReturn {
 /**
  * SSE ストリームのバッファからマーカーで囲まれた JSON を抽出し、
  * テキスト部分と株価データを分離する。
+ *
+ * ストリーミング途中（開始マーカーはあるが終了マーカーがまだない）の場合、
+ * マーカー以降のテキストを非表示にし、代わりにプレースホルダーを表示する。
  */
 function extractStockData(buffer: string): {
   displayText: string;
   stockData: StockDataPayload | null;
+  isLoadingChart: boolean;
 } {
   let displayText = buffer;
   let stockData: StockDataPayload | null = null;
+  let isLoadingChart = false;
 
   const startIdx = buffer.indexOf(STOCK_DATA_START_MARKER);
   const endIdx = buffer.indexOf(STOCK_DATA_END_MARKER);
 
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    // 完了: マーカー＋JSON を除去してパース
     const jsonStr = buffer.slice(
       startIdx + STOCK_DATA_START_MARKER.length,
       endIdx,
@@ -37,16 +44,20 @@ function extractStockData(buffer: string): {
     try {
       stockData = JSON.parse(jsonStr) as StockDataPayload;
     } catch {
-      // JSON パース失敗時はスキップ（テキスト分析のみ表示）
+      // JSON パース失敗時はスキップ
     }
 
-    // マーカー＋JSON 部分を表示テキストから除去
     displayText =
       buffer.slice(0, startIdx) +
       buffer.slice(endIdx + STOCK_DATA_END_MARKER.length);
+  } else if (startIdx !== -1 && endIdx === -1) {
+    // 途中: 開始マーカーはあるが終了マーカーがまだ来ていない
+    // マーカー以降を非表示にする
+    displayText = buffer.slice(0, startIdx);
+    isLoadingChart = true;
   }
 
-  return { displayText, stockData };
+  return { displayText, stockData, isLoadingChart };
 }
 
 /**
@@ -63,6 +74,7 @@ export function useStockAnalysis(
   const [analysisText, setAnalysisText] = useState("");
   const [stockData, setStockData] = useState<StockDataPayload | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isLoadingChart, setIsLoadingChart] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string>(crypto.randomUUID());
@@ -88,6 +100,7 @@ export function useStockAnalysis(
       setStockData(null);
       stockDataRef.current = null;
       setIsAnalyzing(true);
+      setIsLoadingChart(false);
 
       // JWT トークン取得
       let accessToken: string;
@@ -124,44 +137,32 @@ export function useStockAnalysis(
         signal: abortController.signal,
         onChunk: (chunk: string) => {
           rawBuffer += chunk;
-          const { displayText, stockData: parsed } =
+          const { displayText, stockData: parsed, isLoadingChart: loading } =
             extractStockData(rawBuffer);
           setAnalysisText(displayText);
+          setIsLoadingChart(loading);
           if (parsed) {
             setStockData(parsed);
             stockDataRef.current = parsed;
-            console.log("[useStockAnalysis] Stock data parsed successfully");
+            setIsLoadingChart(false);
           }
         },
         onError: (errorMsg: string) => {
-          // デバッグ: エラー時にバッファの末尾を出力
-          console.log(
-            "[useStockAnalysis] Error. Buffer tail:",
-            rawBuffer.slice(-200),
-          );
           setError(errorMsg);
           setIsAnalyzing(false);
+          setIsLoadingChart(false);
           abortControllerRef.current = null;
         },
         onComplete: () => {
-          // デバッグ: 完了時にマーカー検出状態を出力
-          const hasStart = rawBuffer.includes("<!--STOCK_DATA_JSON-->");
-          const hasEnd = rawBuffer.includes("<!--/STOCK_DATA_JSON-->");
-          console.log(
-            "[useStockAnalysis] Complete. Buffer length:",
-            rawBuffer.length,
-            "Has start marker:", hasStart,
-            "Has end marker:", hasEnd,
-          );
           // 最終パース試行
           if (!stockDataRef.current) {
             const { stockData: finalParsed } = extractStockData(rawBuffer);
             if (finalParsed) {
               setStockData(finalParsed);
-              console.log("[useStockAnalysis] Final parse succeeded");
             }
           }
           setIsAnalyzing(false);
+          setIsLoadingChart(false);
           abortControllerRef.current = null;
         },
       });
@@ -169,5 +170,5 @@ export function useStockAnalysis(
     [runtimeArn],
   );
 
-  return { analysisText, stockData, isAnalyzing, error, analyze };
+  return { analysisText, stockData, isAnalyzing, isLoadingChart, error, analyze };
 }

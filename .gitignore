@@ -41,6 +41,7 @@ agents/__pycache__/
 agents/**/__pycache__/
 agents/*.egg-info/
 agents/.env
+agents/.env.runtime
 *.pyc
 
 # AgentCore CLI

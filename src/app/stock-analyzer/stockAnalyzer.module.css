@@ -79,6 +79,18 @@
   font-size: 0.9rem;
 }
 
+.chartLoading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  color: var(--color-text-secondary);
+  justify-content: center;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

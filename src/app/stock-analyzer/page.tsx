@@ -10,7 +10,7 @@ import styles from "./stockAnalyzer.module.css";
 const runtimeArn = process.env.NEXT_PUBLIC_JP_STOCK_AGENT_RUNTIME_ARN;
 
 export default function StockAnalyzerPage() {
-  const { analysisText, stockData, isAnalyzing, error, analyze } =
+  const { analysisText, stockData, isAnalyzing, isLoadingChart, error, analyze } =
     useStockAnalysis(runtimeArn);
 
   return (
@@ -64,6 +64,15 @@ export default function StockAnalyzerPage() {
       {stockData && stockData.prices.length > 0 && (
         <div className={styles.section}>
           <StockChart data={stockData.prices} />
+        </div>
+      )}
+
+      {isLoadingChart && !stockData && (
+        <div className={styles.section}>
+          <div className={styles.chartLoading}>
+            <span className={styles.spinner} />
+            株価チャートを描画中…
+          </div>
         </div>
       )}
 
