@@ -171,7 +171,10 @@ export function useStockAnalysis(
         if (!tickerCode) return; // 銘柄コードが抽出できない場合はスキップ
         try {
           const client = generateClient<Schema>();
-          const result = await client.queries.getStockPrices({ tickerCode });
+          const result = await client.queries.getStockPrices(
+            { tickerCode },
+            { authMode: "userPool" },
+          );
           if (result.data) {
             const parsed = JSON.parse(result.data) as StockDataPayload & { error?: string };
             if (!parsed.error) {
