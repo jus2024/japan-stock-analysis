@@ -196,6 +196,34 @@ export function useStockAnalysis(
 
       // チャンクを蓄積するバッファ
       let rawBuffer = "";
+      // SSEストリームから銘柄コードを検出して後追いGraphQLクエリを発火するためのフラグ
+      let lateQueryFired = false;
+
+      /** SSEストリーム中に銘柄コードを検出したら後追いでGraphQLクエリを発火する */
+      const fireLateGraphQLQuery = (detectedCode: string) => {
+        if (lateQueryFired || stockDataSourceRef.current === "graphql") return;
+        lateQueryFired = true;
+        (async () => {
+          try {
+            const client = generateClient<Schema>();
+            const result = await client.queries.getStockPrices(
+              { tickerCode: detectedCode },
+              { authMode: "userPool" },
+            );
+            if (result.data && stockDataSourceRef.current !== "graphql") {
+              const parsed = JSON.parse(result.data) as StockDataPayload & { error?: string };
+              if (!parsed.error) {
+                setStockData(parsed);
+                stockDataRef.current = parsed;
+                stockDataSourceRef.current = "graphql";
+                setIsLoadingChart(false);
+              }
+            }
+          } catch {
+            // 後追いクエリ失敗時は何もしない
+          }
+        })();
+      };
 
       const ssePromise = invokeRuntime({
         runtimeArn,
@@ -208,6 +236,14 @@ export function useStockAnalysis(
           const { displayText, stockData: parsed, isLoadingChart: loading } =
             extractStockData(rawBuffer);
           setAnalysisText(displayText);
+
+          // 銘柄名検索の場合: SSEテキストから銘柄コードを検出して後追いGraphQLクエリ
+          if (!tickerCode && !lateQueryFired && stockDataSourceRef.current !== "graphql") {
+            const detected = extractTickerCode(rawBuffer);
+            if (detected) {
+              fireLateGraphQLQuery(detected);
+            }
+          }
 
           if (parsed) {
             // Task 3.3 & 3.4: SSEマーカーからデータが取得された場合、
