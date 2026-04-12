@@ -34,5 +34,5 @@ jobs:
         run: |
           python -c "from common.config import get_model_id; print('config OK')"
           python -c "from common.logging import setup_logger; print('logging OK')"
-          python -c "from sample_agent.tools import current_time; print('tools OK')"
-          python -c "from sample_agent.app import app; print('app OK')"
+          python -c "from jp_stock_agent.tools import get_stock_prices; print('tools OK')"
+          python -c "from jp_stock_agent.app import app; print('app OK')"
