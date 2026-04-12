@@ -56,8 +56,8 @@ Cognito の情報を使って JWT 認証を設定します。`<User Pool ID>` �
 
 ```bash
 agentcore configure \
-  --entrypoint sample_agent/app.py \
-  --name sample_agent \
+  --entrypoint jp_stock_agent/app.py \
+  --name jp_stock_agent \
   --authorizer-config '{"customJWTAuthorizer":{"discoveryUrl":"https://cognito-idp.<region>.amazonaws.com/<User Pool ID>/.well-known/openid-configuration","allowedClients":["<Client ID>"]}}' \
   --region us-west-2
 ```
@@ -91,9 +91,9 @@ Amplify コンソール → アプリ → ホスティング → 環境変数:
 
 | キー | 値 |
 |------|-----|
-| `NEXT_PUBLIC_AGENTCORE_RUNTIME_ARN` | 手順 2-3 で取得した ARN |
+| `NEXT_PUBLIC_JP_STOCK_AGENT_RUNTIME_ARN` | 手順 2-3 で取得した ARN |
 
-設定後、再デプロイ（再ビルドをトリガー、または Git push）すれば `/sample` ページのエージェントチャットが接続可能になります。
+設定後、再デプロイ（再ビルドをトリガー、または Git push）すればトップページのエージェント分析が有効になります。
 
 ## 注意事項
 

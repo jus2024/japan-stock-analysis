@@ -10,7 +10,7 @@
 ```
 agents/
   common/           # エージェント共通処理（設定、ログ）
-  sample_agent/     # 最小サンプルエージェント
+  jp_stock_agent/   # 日本株分析エージェント
   scripts/          # ローカル実行スクリプト
   pyproject.toml    # Python プロジェクト定義
   .env.example      # 環境変数テンプレート
