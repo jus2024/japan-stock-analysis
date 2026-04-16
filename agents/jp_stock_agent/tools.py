@@ -265,10 +265,14 @@ def _safe_get(info: dict, key: str, multiplier: float = 1.0):
         fval = float(val)
         if math.isnan(fval) or math.isinf(fval):
             return None
-        result = round(fval * multiplier, 2)
-        # yfinance の比率値が異常に大きい場合は multiplier 適用済みと判断
-        if multiplier > 1.0 and result > 100.0:
+        # yfinance の比率フィールド（dividendYield, returnOnEquity 等）は
+        # 通常 0.0〜1.0 の小数で返るが、銘柄によっては既にパーセント表記
+        # （例: 3.5 = 3.5%）で返るケースがある。
+        # multiplier=100 で変換する場合、元値が 1.0 を超えていれば
+        # 既にパーセント表記と判断し multiplier を適用しない。
+        if multiplier > 1.0 and fval > 1.0:
             return round(fval, 2)
+        result = round(fval * multiplier, 2)
         return result
     except (TypeError, ValueError):
         return None
@@ -354,7 +358,13 @@ def get_financial_metrics(ticker_code: str) -> str:
         per = _safe_get(info, "trailingPE") or _safe_get(info, "forwardPE")
         pbr = _safe_get(info, "priceToBook")
         roe = _safe_get(info, "returnOnEquity", multiplier=100.0)
-        dividend_yield = _safe_get(info, "dividendYield", multiplier=100.0)
+        # dividendYield: yfinance は日本株で既にパーセント相当の値を返す
+        # （例: 2.81 = 2.81%）ため multiplier は不要。
+        # dividendYield = 予想配当ベース、trailingAnnualDividendYield = 過去実績ベース
+        dividend_yield = _safe_get(info, "dividendYield")
+        trailing_dividend_yield = _safe_get(
+            info, "trailingAnnualDividendYield", multiplier=100.0,
+        )
         market_cap = _safe_get(info, "marketCap")
         revenue = _safe_get(info, "totalRevenue")
         operating_income = _safe_get(info, "operatingIncome")
@@ -378,7 +388,7 @@ def get_financial_metrics(ticker_code: str) -> str:
             "low_label": "低い水準（資本効率に課題）", "mid_label": "標準的な水準",
             "high_label": "高い水準（資本効率が良好）",
         }))
-        evaluations.append(_evaluate_metric("配当利回り", dividend_yield, {
+        evaluations.append(_evaluate_metric("配当利回り（予想）", dividend_yield, {
             "low": 1.5, "high": 3.5,
             "low_label": "低い水準", "mid_label": "標準的な水準",
             "high_label": "高い水準（高配当）",
@@ -392,7 +402,9 @@ def get_financial_metrics(ticker_code: str) -> str:
         # 取得できなかった項目を集計
         metrics_map = {
             "PER": per, "PBR": pbr, "ROE": roe,
-            "配当利回り": dividend_yield, "時価総額": market_cap,
+            "配当利回り（予想）": dividend_yield,
+            "配当利回り（実績）": trailing_dividend_yield,
+            "時価総額": market_cap,
             "売上高": revenue, "営業利益": operating_income,
             "純利益": net_income, "自己資本比率": equity_ratio,
         }
@@ -406,6 +418,7 @@ def get_financial_metrics(ticker_code: str) -> str:
                 "pbr": pbr,
                 "roe": roe,
                 "dividend_yield": dividend_yield,
+                "trailing_dividend_yield": trailing_dividend_yield,
                 "market_cap": market_cap,
                 "revenue": revenue,
                 "operating_income": operating_income,
@@ -660,21 +673,63 @@ def search_news(company_name: str, ticker_code: str) -> str:
         )
 
 
-# --- 同業種比較用: 主要日本企業のセクター別マッピング ---
+# --- 同業種比較用: yfinance Screener による動的検索 ---
+# 静的マッピングでは全業種をカバーしきれないため、
+# yfinance の Screener API で同一 industry の日本上場企業を動的に取得する。
 
-_SECTOR_PEERS: dict[str, list[str]] = {
-    "Consumer Cyclical": ["7203", "7267", "7261", "7269", "7201", "7211", "9983", "9984"],
-    "Technology": ["6758", "6861", "6902", "6501", "6503", "6752", "6702", "6701", "4063"],
-    "Financial Services": ["8306", "8316", "8411", "8604", "8601", "8766", "8750", "8309"],
-    "Industrials": ["6301", "6302", "7011", "7012", "6367", "6361", "6326", "7013"],
-    "Communication Services": ["9432", "9433", "9434", "4689", "9613", "4755", "3659"],
-    "Healthcare": ["4502", "4503", "4519", "4568", "4523", "4506", "4507", "4578"],
-    "Basic Materials": ["5401", "5411", "5406", "3401", "3402", "4183", "4188", "4005"],
-    "Consumer Defensive": ["2914", "2502", "2503", "2801", "2802", "2269", "2871", "7453"],
-    "Energy": ["5020", "5019", "5021", "1605", "1662", "5017"],
-    "Real Estate": ["8801", "8802", "8830", "3289", "8804", "3231"],
-    "Utilities": ["9501", "9502", "9503", "9531", "9532"],
-}
+from yfinance.screener import EquityQuery, screen as yf_screen
+
+
+def _find_peer_codes_via_screener(
+    ticker_code: str, sector: str, industry: str,
+) -> list[str]:
+    """yfinance Screener API で同一 industry の日本上場企業を検索する。
+
+    1. まず industry 完全一致で検索（最も精度が高い）
+    2. 結果が不足なら同一 sector で検索（フォールバック）
+    対象銘柄自身は除外し、時価総額降順で最大6社を返す。
+    """
+    codes: list[str] = []
+
+    # 1. industry 完全一致で検索
+    if industry:
+        try:
+            q = EquityQuery("and", [
+                EquityQuery("eq", ["region", "jp"]),
+                EquityQuery("eq", ["industry", industry]),
+            ])
+            result = yf_screen(
+                q, sortField="intradaymarketcap", sortAsc=False, size=10,
+            )
+            for row in result.get("quotes", []):
+                sym = row.get("symbol", "")
+                if sym.endswith(".T"):
+                    code = sym.replace(".T", "")
+                    if code != ticker_code and code not in codes:
+                        codes.append(code)
+        except Exception as e:
+            logger.warning("Screener industry 検索でエラー: %s", e)
+
+    # 2. 不足なら sector で検索（フォールバック）
+    if len(codes) < 3 and sector:
+        try:
+            q = EquityQuery("and", [
+                EquityQuery("eq", ["region", "jp"]),
+                EquityQuery("eq", ["sector", sector]),
+            ])
+            result = yf_screen(
+                q, sortField="intradaymarketcap", sortAsc=False, size=15,
+            )
+            for row in result.get("quotes", []):
+                sym = row.get("symbol", "")
+                if sym.endswith(".T"):
+                    code = sym.replace(".T", "")
+                    if code != ticker_code and code not in codes:
+                        codes.append(code)
+        except Exception as e:
+            logger.warning("Screener sector 検索でエラー: %s", e)
+
+    return codes[:6]
 
 
 @tool
@@ -707,13 +762,13 @@ def get_sector_peers(ticker_code: str) -> str:
         sector = info.get("sector", "")
         industry = info.get("industry", "")
 
-        # セクターに基づいて同業種銘柄を取得
-        peer_codes = _find_peer_codes(ticker_code, sector)
+        # industry（業種小分類）に基づいて同業種銘柄を動的検索
+        peer_codes = _find_peer_codes_via_screener(ticker_code, sector, industry)
 
         if len(peer_codes) < 3:
             logger.warning(
-                "銘柄 %s のセクター「%s」で十分な同業種企業が見つかりません",
-                ticker_code, sector,
+                "銘柄 %s の業種「%s」（セクター: %s）で十分な同業種企業が見つかりません",
+                ticker_code, industry, sector,
             )
             return json.dumps({
                 "ticker_code": ticker_code,
@@ -722,7 +777,7 @@ def get_sector_peers(ticker_code: str) -> str:
                 "industry": industry,
                 "peers": [],
                 "evaluation": (
-                    f"セクター「{sector}」の同業種企業データが"
+                    f"業種「{industry}」（セクター: {sector}）の同業種企業データが"
                     "不足しているため、比較分析を実行できませんでした。"
                 ),
             }, ensure_ascii=False)
@@ -762,12 +817,6 @@ def get_sector_peers(ticker_code: str) -> str:
         )
 
 
-def _find_peer_codes(ticker_code: str, sector: str) -> list[str]:
-    """セクターに基づいて同業種の銘柄コードリストを返す（対象銘柄を除く）。"""
-    codes = _SECTOR_PEERS.get(sector, [])
-    return [c for c in codes if c != ticker_code][:6]
-
-
 def _fetch_peer_metrics(code: str, info: dict | None = None) -> dict:
     """指定銘柄の比較用財務指標を取得する。"""
     try:
@@ -781,7 +830,7 @@ def _fetch_peer_metrics(code: str, info: dict | None = None) -> dict:
             "per": _safe_get(info, "trailingPE") or _safe_get(info, "forwardPE"),
             "pbr": _safe_get(info, "priceToBook"),
             "roe": _safe_get(info, "returnOnEquity", multiplier=100.0),
-            "dividend_yield": _safe_get(info, "dividendYield", multiplier=100.0),
+            "dividend_yield": _safe_get(info, "dividendYield"),
             "market_cap": _safe_get(info, "marketCap"),
         }
     except Exception as e:
