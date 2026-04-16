@@ -12,6 +12,8 @@ import urllib.request
 
 import yfinance as yf
 from strands import tool
+from yfinance.screener import EquityQuery
+from yfinance.screener import screen as yf_screen
 
 from common.logging import setup_logger
 
@@ -676,8 +678,6 @@ def search_news(company_name: str, ticker_code: str) -> str:
 # --- 同業種比較用: yfinance Screener による動的検索 ---
 # 静的マッピングでは全業種をカバーしきれないため、
 # yfinance の Screener API で同一 industry の日本上場企業を動的に取得する。
-
-from yfinance.screener import EquityQuery, screen as yf_screen
 
 
 def _find_peer_codes_via_screener(
