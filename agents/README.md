@@ -52,12 +52,11 @@ agentcore configure
 # ビルド & デプロイ
 agentcore deploy
 
-# 環境変数の設定（JWT 認証含む）
-# 注意: --authorizer-configuration を省略すると JWT 設定がリセットされます
-aws bedrock-agentcore update-agent-runtime \
-  --agent-runtime-name <runtime-name> \
-  --environment-variables '{"MODEL_ID":"...","EXTERNAL_API_KEY":"..."}'
+# 環境変数の設定（デプロイ後に毎回実行）
+./scripts/set_env.sh
 ```
+
+> **注意**: `agentcore launch` / `agentcore deploy` は `.env` の内容を Runtime に自動反映しません。デプロイ後は必ず `set_env.sh` を実行してください。
 
 ### デプロイ時の注意
 

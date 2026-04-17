@@ -53,10 +53,11 @@
 │  │  │  │ Agents SDK   │─→│ Claude Sonnet   │  │      │              │
 │  │  │  └──────────────┘  └─────────────────┘  │      │              │
 │  │  │                                         │      │              │
-│  │  │  Tools: get_stock_prices,               │      │              │
-│  │  │         get_financial_data,              │      │              │
-│  │  │         search_stock_news,               │      │              │
-│  │  │         get_peer_comparison              │      │              │
+│  │  │  Tools: search_stock,                    │      │              │
+│  │  │         get_stock_prices,               │      │              │
+│  │  │         get_financial_metrics,           │      │              │
+│  │  │         search_news,                     │      │              │
+│  │  │         get_sector_peers                 │      │              │
 │  │  └─────────────────────────────────────────┘      │              │
 │  │                                                   │              │
 │  │  JWT 認証: Cognito User Pool を参照               │              │
@@ -117,10 +118,11 @@ Cognito User Pool (Amplify 管理)
 │  Amplify Backend │   │  AgentCore Runtime            │
 │                  │   │                              │
 │  AppSync API     │   │  jp_stock_agent              │
-│  Cognito Auth    │   │  ├─ get_stock_prices         │
-│  stock-price     │   │  ├─ get_financial_data       │
-│  Lambda          │   │  ├─ search_stock_news        │
-│                  │   │  └─ get_peer_comparison      │
+│  Cognito Auth    │   │  ├─ search_stock             │
+│  stock-price     │   │  ├─ get_stock_prices         │
+│  Lambda          │   │  ├─ get_financial_metrics    │
+│                  │   │  ├─ search_news              │
+│                  │   │  └─ get_sector_peers         │
 └────────┬─────────┘   └──────────────────────────────┘
          │
          ▼
@@ -174,10 +176,11 @@ Cognito User Pool (Amplify 管理)
 
 Strands Agents SDK ベースの Python エージェント。以下のツールを順次実行して総合分析レポートを生成します:
 
-1. `get_stock_prices` — テクニカル分析用テキスト要約
-2. `get_financial_data` — ファンダメンタルズ指標
-3. `search_stock_news` — ニュース・IR 情報
-4. `get_peer_comparison` — 同業種比較
+1. `search_stock` — 銘柄コードまたは銘柄名から企業を特定
+2. `get_stock_prices` — テクニカル分析用テキスト要約
+3. `get_financial_metrics` — ファンダメンタルズ指標（予想・実績配当利回り含む）
+4. `search_news` — ニュース・IR 情報
+5. `get_sector_peers` — 同業種比較（yfinance Screener API で industry 単位の動的検索）
 
 ### スコアリング
 

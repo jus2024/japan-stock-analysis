@@ -10,7 +10,7 @@
 | バックエンド | AWS Amplify Gen 2（AppSync, Cognito, Lambda） |
 | AI エージェント | Python / Strands Agents SDK |
 | エージェント実行基盤 | Amazon Bedrock AgentCore Runtime |
-| 株価データ | Yahoo Finance v8 API |
+| 株価データ | Yahoo Finance API（yfinance） |
 | ホスティング | Amplify Hosting |
 | IDE 支援 | Kiro |
 
@@ -28,6 +28,20 @@
 
 フロントエンドは GraphQL クエリと SSE 通信を並行実行します。チャートは Lambda から即座に描画し、分析テキストはエージェントからストリーミング表示します。詳細は [docs/architecture.md](docs/architecture.md) を参照してください。
 
+## エージェントの分析機能
+
+日本株分析エージェントは以下のツールを順次実行して総合分析レポートを生成します。
+
+| ツール | 機能 |
+|--------|------|
+| `search_stock` | 銘柄コードまたは銘柄名から企業を特定 |
+| `get_stock_prices` | 過去1年分の株価データとテクニカル指標を取得 |
+| `get_financial_metrics` | PER・PBR・ROE・配当利回り（予想/実績）等の財務指標を取得 |
+| `search_news` | 直近ニュース・IR情報を取得し影響度を評価 |
+| `get_sector_peers` | 同一業種の上場企業を動的検索し財務指標を比較 |
+
+同業種比較は yfinance Screener API を使って `industry`（業種小分類）単位で動的に検索するため、静的リストでカバーしきれないニッチな業種にも対応します。
+
 ## ディレクトリ構成
 
 ```
@@ -39,9 +53,10 @@ src/                    # フロントエンド（Next.js App Router）
   types/                # 型定義
 amplify/                # Amplify Gen 2 バックエンド定義
   functions/stock-price/ # 株価データ取得 Lambda
-agents/                 # Strands エージェント
+agents/                 # Strands エージェント（オプション）
   jp_stock_agent/       # 日本株分析エージェント
   common/               # 共通処理（設定、ログ）
+  scripts/              # ローカル実行・環境変数設定スクリプト
 docs/                   # ドキュメント
 .kiro/                  # Kiro ワークスペース設定
 ```
@@ -51,7 +66,7 @@ docs/                   # ドキュメント
 ### 前提条件
 
 - Node.js 20（`.nvmrc` で指定済み）
-- Python 3.10+
+- Python 3.10+（エージェント機能を使う場合）
 - AWS アカウントと認証情報
 
 ### Web アプリ
@@ -68,7 +83,7 @@ npx ampx sandbox
 npm run dev
 ```
 
-### エージェント
+### エージェント（オプション）
 
 ```bash
 cd agents
@@ -95,8 +110,10 @@ GitHub リポジトリを Amplify に接続すると、push で自動デプロ�
 cd agents
 agentcore configure   # JWT 認証に Cognito の情報を設定
 agentcore launch      # ビルド & デプロイ
-./scripts/set_env.sh  # 環境変数を設定
+./scripts/set_env.sh  # 環境変数を設定（launch 後に毎回実行）
 ```
+
+> **注意**: `agentcore launch` は `agents/.env` の内容を Runtime に自動反映しません。デプロイ後は必ず `set_env.sh` を実行して環境変数を設定してください。
 
 ### 3. 接続
 
@@ -137,4 +154,4 @@ npx ampx sandbox delete
 
 ## ライセンス
 
-[LICENSE](LICENSE) を参照してください。
+[MIT-0](LICENSE)

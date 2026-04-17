@@ -51,5 +51,10 @@ agents/.bedrock_agentcore/
 # Hypothesis テストキャッシュ
 agents/.hypothesis/
 
+# Ruff / pytest キャッシュ
+.ruff_cache/
+agents/.ruff_cache/
+agents/.pytest_cache/
+
 # Kiro ローカル設定
 .kiro/settings/
